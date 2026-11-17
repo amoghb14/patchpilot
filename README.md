@@ -1,269 +1,281 @@
 # PatchPilot
 
-**Detect breaking API changes, find the Python code that depends on them, and generate a migration your tests prove.**
+**A tool that notices when a website's API changes, finds the exact lines of your code that will
+break, writes the fix, and runs your tests to prove the fix works.**
 
-PatchPilot takes two OpenAPI contracts (an API's old and new versions), computes a semantic
-diff, traces every breaking change into a real repository with an AST-level taint analysis,
-and writes a source-preserving patch with [LibCST](https://libcst.readthedocs.io/). Then it
-proves the patch: the repository's test suite is run twice in a disposable sandbox — once
-unpatched against the new contract (it must fail) and once patched (it must pass).
-
-The interesting part is not "an LLM edits code". It is the evidence chain: a change is only
-auto-applied when *metadata authorises it* **and** *the analyser can prove a given field read
-comes from that specific endpoint*.
+If that sentence felt like a lot: keep reading. The rest of this page explains every word in it.
 
 ---
 
-## What it does
+## The problem, with a normal-person example
 
+Apps rarely work alone. A weather app gets its data from a weather company's **API** — a service on
+the internet that answers requests like "what's the temperature in Austin?".
+
+For that to work, both sides have to agree on a **contract**: what questions you're allowed to ask,
+and what shape the answer comes back in.
+
+```json
+{ "name": "Ada Lovelace", "email": "ada@example.com" }
 ```
-old spec ─┐
-          ├─▶ semantic diff ──▶ breaking changes ─┐
-new spec ─┘   (rename-aware)                     │
-                                                 ├─▶ affected code ──▶ patch ──▶ verify
-repository ─────▶ AST taint analysis ────────────┘   (planner)      (LibCST)   (sandboxed tests)
+
+Now the weather company (or Stripe, or Twilio, or anyone) ships a new version. Same idea, but they
+decided `name` should be called `full_name`:
+
+```json
+{ "full_name": "Ada Lovelace" }
 ```
 
-1. **Diff** the contracts: removed/renamed fields, type and enum changes, newly required request
-   fields, moved or deleted endpoints. Renames are aligned *cascadingly* — if `data` becomes
-   `results`, then `data[].name → results[].full_name` is discovered relative to the renamed parent.
-2. **Locate** the damage: recognise outbound HTTP calls, parse their URL into a path template that
-   is matched to an OpenAPI operation, then follow `.json()`, subscripts, loops and comprehensions
-   to every field read. Values that did not come from an API response are never touched.
-3. **Plan** a minimal edit set. Missing metadata means "report, don't rewrite".
-4. **Transform** with LibCST, addressed by exact line/column, so comments, ordering, quotes and
-   unrelated code survive byte-for-byte.
-5. **Verify** by running the suite before and after in a fresh temp copy of the repository.
+Your code still asks for `name`. It gets nothing back, and your app crashes — probably in
+production, probably on a Friday.
 
-### The demo, end to end
+Finding *every* line that needs updating by hand is slow and error-prone. A big codebase might call
+that API in fifty places. Miss one and you ship a bug.
 
-`examples/acme_client` is a small customer/invoice app written against Acme API **v1.4.0**.
-`fixtures/acme_v2.yaml` is the breaking **2.0.0** release; `examples/acme_client/mock_api.py`
-serves either contract so the breakage is real, not simulated with mocks.
+**PatchPilot automates that whole job.** It reads the old contract and the new contract, finds the
+differences, tracks down every line of code that depends on the changed parts, writes a small patch,
+and then *runs your tests* to show the patch actually works.
+
+---
+
+## Why this is not "just ask ChatGPT to rewrite it"
+
+The hard part is not editing text. The hard part is **being sure**.
+
+Three things make this project interesting:
+
+1. **The tool has to know which `name` is which.** Your program might have a local dictionary called
+   `customer` that also has a `name` key — one that has nothing to do with the API. A dumb
+   find-and-replace would break it. PatchPilot follows the data from the actual HTTP request, so it
+   only touches values that really came from that API.
+2. **A rename must be authorised.** Guessing that a removed field was renamed to a similar-looking
+   new field is how migration bots destroy code. Unless the API provider publishes an explicit rule
+   ("`name` became `full_name`"), PatchPilot reports a *suspicion* and asks a human.
+3. **The patch must be proven.** A patch is only called `verified` when the unpatched code fails the
+   tests under the new contract **and** the patched code passes them.
+
+---
+
+## Does it actually work?
+
+Yes, and you can check it yourself in about a minute. The repo contains a small demo app in
+`examples/acme_client` built for version 1.4.0 of a fake "Acme" API. A second contract (2.0.0) in
+`fixtures/acme_v2.yaml` breaks it on purpose: fields get renamed, one is deleted, one endpoint moves,
+and the update call now requires a new field.
+
+Running the real pipeline gives:
 
 | Step | Result |
 | --- | --- |
-| Contract diff | 30 changes, 21 breaking |
-| Code analysis | 13 Python files, 5 call sites, 17 affected locations |
-| Affected files | `app/reports.py`, `app/client.py` — and **not** `app/legacy.py`, whose local `customer` dicts are the false-positive trap |
-| Generated patch | 7 edits in 2 files |
-| Verification | baseline: **5 failed** → patched: **9 passed** (`verified`) |
+| Compare the two contracts | 30 changes, 21 of them breaking |
+| Scan the demo code | 13 files, 5 API call sites, 17 code locations affected |
+| Generate the patch | 7 edits across 2 files |
+| Run the tests before the patch | **5 failed** |
+| Run the tests after the patch | **9 passed** → verdict: `verified` |
 
-The patch itself is intentionally small:
+The tool also leaves `app/legacy.py` completely alone. That file has `customer["name"]` three times —
+but those dictionaries come from a CSV import, not from the API. Not touching them is the whole point.
 
-```diff
--    email = customer["email"]
-+    email = customer.get("email", None)
--        "display_name": customer["name"].strip(),
-+        "display_name": customer["full_name"].strip(),
--    for customer in payload["data"]:
-+    for customer in payload["results"]:
--            json={"plan": plan},
-+            json={"plan": plan, "change_reason": "patchpilot migration"},
--        response = self.session.get(f"{self.base_url}/v1/invoices/{invoice_id}")
-+        response = self.session.get(f"{self.base_url}/v2/invoices/{invoice_id}")
-```
-
-What PatchPilot deliberately does *not* do here: `DELETE /v1/customers/{customer_id}` was removed,
-`Customer.created_at` changed from ISO string to epoch seconds, and the `plan`/`status` enums lost
-values. All three are reported as breaking and sent to review with a reason — there is no safe
-mechanical rewrite, and guessing one is how migration bots break production.
+There is a benchmark too (run `scripts/benchmark.py` to reproduce). On a generated test set with 400
+known answers, it found all 400, with **zero false positives**, at about **1,060 files per second**.
+That's a synthetic test set — a check that the code works, not a promise about every real-world repo.
 
 ---
 
-## Quickstart
+## Try it on your computer
 
-Requires Python 3.11+ and Node 20+.
+You need two things installed:
+
+| Tool | Version | Check it with |
+| --- | --- | --- |
+| Python | 3.11 or newer | `python3 --version` |
+| Node.js | 20 or newer | `node --version` |
+
+If either command says "not found", install it from [python.org](https://www.python.org/downloads/)
+and [nodejs.org](https://nodejs.org), then reopen your terminal.
+
+Everything below uses two terminal windows. **Window 1** runs the backend (the analysis engine).
+**Window 2** runs the dashboard (what you see in a browser).
+
+### Step 1 — install the backend
 
 ```bash
 cd ~/Downloads/patchpilot
-
-# 1. backend
-python3.11 -m venv .venv
+python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements.txt
+```
 
-# 2. seed the demo (repository + both specs + scan + migration + verification)
+A virtual environment (`.venv`) is a private folder of libraries so this project can't mess up
+anything else on your computer. Activating it isn't needed — every command starts with
+`.venv/bin/`, which uses it directly.
+
+### Step 2 — load the demo
+
+```bash
 .venv/bin/python scripts/seed_demo.py
-
-# 3. API on :8000
-cd backend && ../.venv/bin/uvicorn patchpilot.main:app --reload --port 8000
-
-# 4. dashboard on :3000 (separate shell)
-cd frontend && npm install && npm run dev
 ```
 
-Open <http://localhost:3000>, or the API docs at <http://127.0.0.1:8000/docs>.
+You should see something like:
 
-The seed prints a scan id; the dashboard also links it.
+```
+repository   acme-client (13 python files)
+scan         c5c7348a-...
+  changes    30 total, 21 breaking
+  affected   17 code locations
+migration    7ff85940-... (7 edits, 2 files)
+verification verified: Regression reproduced (5 failing, 0 errors) and the patch passes 9 tests
+```
 
-### Run the tests
+That last line is the whole project in one sentence: it broke the app, fixed it, and proved it.
+
+### Step 3 — start the API (Window 1)
 
 ```bash
-cd backend && ../.venv/bin/python -m pytest        # 32 tests
-cd frontend && npm run typecheck && npm run build
+cd ~/Downloads/patchpilot/backend
+../.venv/bin/uvicorn patchpilot.main:app --port 8000
 ```
 
-### Reproduce the benchmark
+Leave it running. Check it worked by opening <http://127.0.0.1:8000/docs> — you'll get a clickable
+list of every API endpoint.
+
+### Step 4 — start the dashboard (Window 2)
 
 ```bash
-.venv/bin/python scripts/benchmark.py             # writes benchmarks/latest.json
+cd ~/Downloads/patchpilot/frontend
+npm install
+npm run dev
 ```
 
-The dashboard reads that artifact through `GET /api/benchmarks/latest`; nothing is hard-coded.
+Open <http://localhost:3000>. You should see the demo scan, a red "21 breaking" number, a list of
+changes with the code they touch, a coloured diff, and a green `verified` result.
+
+### Step 5 — try the buttons
+
+- Click a row in **Compatibility report** to see the exact file, line, and code snippet.
+- In **Migration**, the diff shows the patch (nothing is written to your files — it lives in a
+  throwaway copy).
+- Press **Verify patch**. It runs the demo's test suite twice — once without the patch (fails) and
+  once with it (passes) — and prints both results.
+- **Diff playground** lets you paste any two OpenAPI files and compare them.
+
+### Windows instead of macOS/Linux
+
+Replace `.venv/bin/...` with `.venv\Scripts\...`:
+
+```bat
+python -m venv .venv
+.venv\Scripts\pip install -r backend\requirements.txt
+.venv\Scripts\python scripts\seed_demo.py
+```
 
 ---
 
-## Measured results
+## How it works, in four steps
 
-From `benchmarks/latest.json` (Python 3.11, macOS arm64), generated corpus with ground truth:
+Think of it as four people working together.
 
-| Metric | Value |
+**1. The map reader.** Two OpenAPI files are maps of the same territory, drawn a year apart.
+PatchPilot lines them up and lists what changed. The tricky part is renames: if a list changed its
+key from `data` to `results`, and each item inside changed `name` to `full_name`, that's two linked
+changes — not four random ones. The tool tracks them as a chain.
+
+**2. The detective.** For every API call in your Python code, it works out *which endpoint* is being
+called, then follows the returned data around that function: through `.json()`, into variables,
+through loops and list comprehensions. Only reads that can be traced back to that endpoint count as
+affected. This is called **taint analysis** — data from the API is "tainted", and it stays tainted as
+it flows.
+
+**3. The careful editor.** It rewrites only what it can justify, and only the exact characters that
+need to change (that's what **LibCST** does). Comments stay, spacing stays, the untouched 99% of the
+file stays byte-for-byte identical. If a change isn't safe to automate, it goes into a "needs a
+human" list with a reason.
+
+**4. The experiment.** Changing code isn't proof. It copies your repo into a temporary folder, runs
+your tests against the *new* contract without the patch (they must fail — otherwise the test suite
+can't prove anything), then runs them again with the patch applied (they must pass). Only then is the
+migration labelled `verified`.
+
+Want the full version — algorithms, data structures, design trade-offs, API reference? See
+**[docs/HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md)**.
+
+---
+
+## What's in the box
+
+```
+backend/            the engine and the API (Python, FastAPI, SQLAlchemy)
+  engine/openapi/     reading and comparing API contracts
+  engine/analysis/    finding the code that depends on them
+  engine/migration/   writing the patch
+  engine/verification/running tests before and after
+frontend/           the dashboard (Next.js, TypeScript, Tailwind, Monaco)
+examples/acme_client/a small app that really breaks under the new contract
+fixtures/           the two Acme contracts + the rename rules
+scripts/            seed_demo.py (load the demo), benchmark.py (measure accuracy/speed)
+benchmarks/         the last measured numbers
+docs/               the technical deep dive
+```
+
+Tests and measurements:
+
+```bash
+cd backend && ../.venv/bin/python -m pytest      # 32 tests
+.venv/bin/python scripts/benchmark.py            # writes benchmarks/latest.json
+cd frontend && npm run build                     # production build
+```
+
+---
+
+## Words you'll meet
+
+| Word | What it means here |
 | --- | --- |
-| Labelled field locations | 400 |
-| True positives / false positives / false negatives | 400 / **0** / **0** |
-| Precision / recall / F1 | **1.000** / **1.000** / **1.000** |
-| Throughput | ~1,060 files/s (0.94 ms per file) |
-| Changes detected | 6 breaking |
-| Migration verification | `verified` — 5 failing before, 9 passing after |
-
-The corpus is generated, so this measures the analyser against *known* labels including decoys
-(local dictionaries with identical field names) — it is not a claim about arbitrary real-world
-repositories. Scaling runs (25 / 100 / 250 modules) are in the artifact as well.
+| **API** | A service another program talks to over the internet. |
+| **OpenAPI / spec** | A file that describes an API: its URLs, inputs and outputs. The "contract". |
+| **Breaking change** | A change that makes existing code fail — a renamed or deleted field, a new required input, a moved URL. |
+| **Endpoint** | One specific operation, like `GET /v1/customers/{id}`. |
+| **AST** | "Abstract syntax tree" — your code turned into a tree of parts, so a program can reason about it instead of just matching text. |
+| **Taint analysis** | Tracking where a value came from as it moves through code. |
+| **LibCST** | A library that edits Python code while keeping its exact formatting. |
+| **Sandbox** | A throwaway copy of your project, used so experiments can't damage the original. |
+| **Verified** | The unpatched code failed the tests and the patched code passed them. Anything less isn't called verified. |
+| **Precision / recall** | Of everything the tool flagged, how much was right (precision); of everything it *should* have found, how much it found (recall). |
 
 ---
 
-## How the analysis works
+## When something goes wrong
 
-### 1. Rename-aware contract alignment (`engine/openapi/differ.py`)
-
-Schemas are flattened to dotted paths (`data[].full_name`). Before comparing, fields are aligned:
-
-* if the new path exists in the old schema, it is the same field;
-* otherwise, if a metadata rule says `name → full_name`, the candidate old path
-  `parent + "name"` is checked — and the *new* path is recorded as a rename, so children are
-  compared relative to the renamed parent;
-* otherwise a similarity heuristic (`name` vs `full_name`: token containment beats edit distance)
-  may propose a rename, but it is emitted with `confidence="inferred"`, `auto_fixable=false`,
-  `requires_review=true`.
-
-Only `confidence="explicit"` renames ever produce an edit.
-
-### 2. Taint analysis (`engine/analysis/scanner.py`)
-
-Bounded, intra-procedural, with two inter-procedural extensions:
-
-* **HTTP detection** is structural (`requests.get`, `session.post`, `httpx.Client.delete`, …) and the
-  URL is statically folded (literals, f-strings, `+`, module constants) into a path template that is
-  matched segment-by-segment against the spec, with `{}` matching any segment.
-* **Taint propagation** follows assignments, `.json()`, `.get(...)`, subscripts, loops,
-  comprehensions, `with` bindings and attribute chains. `payload["data"][0]["name"]` becomes
-  `data[].name`, exactly the vocabulary the differ uses.
-* **Return summaries**: a wrapper returning `response.json()` is itself treated as tainted at call
-  sites, iterated to a fixpoint (max 4 rounds).
-* **Parameter injection**: passing tainted data into a local function re-analyses that function with
-  the parameter tainted, so `summarise(client.get_customer(id))` is covered.
-
-Field reads on values that are not tainted (`legacy.py`'s CSV dicts, cache lookups) produce nothing.
-Calls whose URL cannot be statically resolved are listed as `unmapped_calls` instead of being guessed.
-
-### 3. Planning and transformation (`engine/migration/`)
-
-`planner.py` turns findings into `CodeEdit`s only when the change is auto-fixable **and** the access
-path matches exactly (an ancestor rename is migrated at the ancestor's own literal, never at a
-descendant's key). Edits:
-
-| Change | Edit |
+| Symptom | Fix |
 | --- | --- |
-| Explicit rename | replace the key/attribute literal |
-| Removed field + `optional_access` rule | `x["field"]` → `x.get("field", None)` |
-| Newly required request field | insert the key into the inline body dict |
-| Moved endpoint | rewrite only the differing static URL segment (`/v1/` → `/v2/`) |
-
-`transformer.py` applies them via LibCST with `PositionProvider`, so edits are surgical. Every
-result is re-parsed and `compile()`d; an edit whose node cannot be found is reported as `not_found`
-rather than silently skipped, and a file that fails to parse is never written.
-
-### 4. Verification (`engine/verification/`)
-
-Two runs in separate temp copies: baseline (unpatched, new-contract environment) must fail, patched
-must pass. Verdicts are explicit: `verified`, `baseline_passed` (the suite cannot prove anything),
-`patch_failed`, `timeout`. A PR can only be opened for a `verified` migration.
+| `python3: command not found` | Install Python 3.11+ and reopen the terminal. On Windows try `python`. |
+| `SyntaxError` while installing | You're on Python 3.9 or older. Check with `python3 --version`. |
+| `Address already in use` (port 8000) | Something else is on that port: run uvicorn with `--port 8001`, and start the dashboard with `NEXT_PUBLIC_API_BASE=http://127.0.0.1:8001 npm run dev`. |
+| Dashboard says "failed to load scan" | The API isn't running. Redo Step 3 and reload. |
+| `Verify` says `baseline_passed` | The demo was pointed at the *old* contract. The environment field should be `ACME_API_MODE=v2`. |
+| `Create PR` does nothing | It needs a GitHub token on the server (`PATCHPILOT_GITHUB_TOKEN`). The rest works without it. |
+| Tests in `examples/` fail | Expected if you run them with `ACME_API_MODE=v2` before patching — that's the breakage being demonstrated. |
 
 ---
 
-## Architecture
+## Honest limits
 
-```
-backend/
-  patchpilot/
-    engine/
-      openapi/       loader (YAML/JSON, $ref, allOf, flattening), differ, migration metadata
-      analysis/      HTTP call detection, taint scanner, finding matcher
-      migration/     planner, LibCST transformer
-      verification/  sandbox, two-run verifier
-    services/        scan → migration → verification orchestration
-    integrations/    GitHub import (tarball) and pull requests (REST)
-    models.py        SQLAlchemy 2.0 schema (repositories, specs, scans, findings,
-                     locations, migrations, verifications, pull requests)
-    api/router.py    FastAPI routes + serializers
-    main.py          app factory, CORS, lifespan
-  tests/             32 tests: diff semantics, taint analysis, patch safety, API, end-to-end verify
-frontend/            Next.js 14 + TypeScript + Tailwind + Monaco diff viewer
-examples/acme_client demo target repo (client, reports, invoices, false-positive traps, tests)
-fixtures/            Acme v1/v2 specs and explicit migration metadata
-scripts/             seed_demo.py, benchmark.py
-benchmarks/latest.json  generated metrics artifact (committed)
-```
-
-### API
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/health` | status + engine capabilities |
-| POST | `/api/repositories` | import a local path (allow-listed roots) or `owner/repo` |
-| GET | `/api/repositories` | list |
-| POST | `/api/specs` | store an OpenAPI document (deduped by hash) |
-| GET | `/api/specs` | list |
-| POST | `/api/diffs` | stateless semantic diff |
-| POST | `/api/scans` | diff + code analysis for a repository/spec pair |
-| GET | `/api/scans`, `/api/scans/{id}` | list / full report with locations |
-| POST | `/api/scans/{id}/migration` | plan + apply edits (no writes to your repo) |
-| GET | `/api/migrations/{id}` | patch, diff, skipped edits, last verification |
-| POST | `/api/migrations/{id}/verify` | run the suite before/after |
-| POST | `/api/migrations/{id}/pull-request` | open a PR (verified migrations only) |
-| GET | `/api/benchmarks/latest` | metrics artifact |
+- **Python only.** The analyser reads Python. JavaScript/TypeScript would be a second analyser.
+- **Not every change can be fixed automatically.** Type changes, removed enum values and deleted
+  endpoints are reported and sent to a human, on purpose.
+- **The verifier is process isolation, not a security vault.** It uses a temp folder, a timeout and a
+  clean environment. For untrusted code you'd run it inside a container.
+- **Macro-level judgement is still yours.** The tool tells you what the patch does and proves the
+  tests pass; deciding whether the new behaviour is *desirable* is a human call.
 
 ---
 
-## Safety model
+## If you're reading this because you want to build something similar
 
-* **Repository roots are allow-listed** (`PATCHPILOT_ALLOWED_REPO_ROOTS`, default: home, `/tmp`,
-  project root). Absolute paths only; `/etc` is rejected.
-* **No shell**: test commands are parsed with `shlex`, shell metacharacters are rejected, and the
-  executable is checked against an allow-list. No `shell=True` anywhere.
-* **Patch containment**: patched files are written into a temp copy whose paths are re-validated;
-  archives are extracted with traversal checks.
-* **Secrets stay server-side**: GitHub tokens come from `PATCHPILOT_GITHUB_TOKEN` and are never
-  returned by an API, logged, or written into a workspace.
-* **Honest limits**: process isolation is a temp directory + timeout + process group kill. It is not
-  a security boundary for untrusted code — run the runner inside a network-less container for that.
-  This is documented in `engine/verification/sandbox.py`.
+Two lessons this project taught me, in case they help:
 
-## Limitations
+1. **The interesting work is in the boring parts.** Parsing contracts and tracking variables is 80%
+   of the code, and it's what makes the "AI fixes your code" demo trustworthy.
+2. **Refusing to act is a feature.** The feature I'm most pleased with is the list of changes the tool
+   *won't* touch. Being wrong quietly is worse than being slow.
 
-* Python repositories only (the analyser is `ast`-based); JavaScript/TypeScript is the obvious next
-  step and would be a separate analyser behind the same `ScanResult` contract.
-* One-hop method resolution and 4 summary/injection rounds bound the interprocedural analysis;
-  dynamic dispatch, `**kwargs` forwarding and `urljoin`-built URLs are reported as unmapped.
-* Migrations cover renames, removals (with an authorised optional-access strategy), newly required
-  request fields, and endpoint moves. Type and enum changes are detected and routed to review.
-* SQLite by default; set `PATCHPILOT_DATABASE_URL=postgresql+psycopg://…` for PostgreSQL. No Alembic
-  migrations yet — the schema is created on startup.
-
-## Roadmap
-
-1. JavaScript/TypeScript analyser sharing the same change vocabulary.
-2. Docker executor for verification (swap `run_command`), with per-language images.
-3. Durable scan queue + webhook triggers on API changelog feeds.
-4. Multi-repo impact graph: one contract change, many consumers.
-5. Suggested migration code for type/enum changes with human-approved templates.
+Built as a portfolio project. Licensed under MIT — see [LICENSE](LICENSE).
