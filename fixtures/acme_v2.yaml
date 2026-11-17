@@ -1,0 +1,172 @@
+openapi: 3.0.3
+info:
+  title: Acme Platform API
+  version: 2.0.0
+  description: >
+    Breaking release. Customer names are now `full_name`, customer lists are paged under
+    `results`, invoice endpoints moved to /v2, PATCH requires `change_reason`, and DELETE
+    /v1/customers/{id} was removed.
+servers:
+  - url: https://api.acme.dev
+paths:
+  /v1/customers:
+    get:
+      operationId: listCustomers
+      summary: List customers
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: A page of customers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerList"
+    post:
+      operationId: createCustomer
+      summary: Create a customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+  /v1/customers/{customer_id}:
+    get:
+      operationId: getCustomer
+      summary: Fetch one customer
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateCustomer
+      summary: Update a customer
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+  /v2/invoices/{invoice_id}:
+    get:
+      operationId: getInvoice
+      summary: Fetch one invoice
+      parameters:
+        - name: invoice_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The invoice
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+components:
+  schemas:
+    Customer:
+      type: object
+      required: [id, full_name, plan, created_at]
+      properties:
+        id:
+          type: string
+        full_name:
+          type: string
+          description: Display name of the customer.
+        plan:
+          type: string
+          enum: [free, pro, enterprise]
+        created_at:
+          type: integer
+          description: Unix epoch seconds.
+        tier:
+          type: integer
+        nickname:
+          type: string
+    CustomerList:
+      type: object
+      required: [results, total, has_more]
+      properties:
+        results:
+          type: array
+          items:
+            $ref: "#/components/schemas/Customer"
+        total:
+          type: integer
+        has_more:
+          type: boolean
+    CustomerCreate:
+      type: object
+      required: [name, email]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        plan:
+          type: string
+          enum: [free, pro, legacy]
+    CustomerUpdate:
+      type: object
+      required: [plan, change_reason]
+      properties:
+        plan:
+          type: string
+          enum: [free, pro, legacy]
+        change_reason:
+          type: string
+          description: Why the plan is changing. Required for the audit log.
+    Invoice:
+      type: object
+      required: [id, customer_id, amount_cents, status, currency]
+      properties:
+        id:
+          type: string
+        customer_id:
+          type: string
+        amount_cents:
+          type: integer
+        status:
+          type: string
+          enum: [open, paid, void]
+        currency:
+          type: string
+          enum: [usd, eur]

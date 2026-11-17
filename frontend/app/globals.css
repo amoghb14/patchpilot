@@ -1,0 +1,62 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  background:
+    radial-gradient(1100px 620px at 12% -10%, rgba(121, 192, 255, 0.09), transparent 60%),
+    radial-gradient(900px 520px at 92% 0%, rgba(126, 231, 135, 0.07), transparent 55%),
+    #070b10;
+  color: #e8eef5;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(121, 192, 255, 0.28);
+}
+
+@layer components {
+  .panel {
+    @apply rounded-lg border border-ink-700 bg-ink-900/80 backdrop-blur;
+  }
+
+  .panel-header {
+    @apply flex items-center justify-between gap-3 border-b border-ink-700 px-4 py-3;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-md border border-ink-600 bg-ink-800
+      px-3 py-1.5 text-sm font-medium text-mist-100 transition
+      hover:border-mist-500/60 hover:bg-ink-700 disabled:cursor-not-allowed disabled:opacity-40;
+  }
+
+  .btn-primary {
+    @apply border-signal-green/40 bg-signal-green/15 text-signal-green hover:border-signal-green/70 hover:bg-signal-green/20;
+  }
+
+  .field {
+    @apply w-full rounded-md border border-ink-600 bg-ink-950/70 px-3 py-2 text-sm text-mist-100
+      outline-none transition focus:border-signal-blue/60;
+  }
+
+  .label {
+    @apply mb-1.5 block text-[11px] font-semibold uppercase tracking-[0.14em] text-mist-500;
+  }
+
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 font-mono text-[11px];
+  }
+}
+
+.scroll-thin::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: #22323f;
+  border-radius: 999px;
+}

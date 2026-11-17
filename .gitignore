@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# Local data
+*.db
+*.db-journal
+patchpilot.db
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+next-env.d.ts
+*.tsbuildinfo
+
+# Workspaces PatchPilot creates for imported repositories
+.patchpilot/
+
+# Secrets and local env
+.env
+.env.local
+
+# OS
+.DS_Store

@@ -1,0 +1,177 @@
+openapi: 3.0.3
+info:
+  title: Acme Platform API
+  version: 1.4.0
+  description: Customer and invoice API. This is the contract the demo application was built against.
+servers:
+  - url: https://api.acme.dev
+paths:
+  /v1/customers:
+    get:
+      operationId: listCustomers
+      summary: List customers
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: A page of customers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CustomerList"
+    post:
+      operationId: createCustomer
+      summary: Create a customer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerCreate"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+  /v1/customers/{customer_id}:
+    get:
+      operationId: getCustomer
+      summary: Fetch one customer
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The customer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+        "404":
+          description: Not found
+    patch:
+      operationId: updateCustomer
+      summary: Update a customer
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomerUpdate"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Customer"
+    delete:
+      operationId: deleteCustomer
+      summary: Delete a customer
+      parameters:
+        - name: customer_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+  /v1/invoices/{invoice_id}:
+    get:
+      operationId: getInvoice
+      summary: Fetch one invoice
+      parameters:
+        - name: invoice_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The invoice
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Invoice"
+components:
+  schemas:
+    Customer:
+      type: object
+      required: [id, name, email, plan, created_at]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+          description: Display name of the customer.
+        email:
+          type: string
+          description: Primary billing email.
+        plan:
+          type: string
+          enum: [free, pro, legacy]
+        created_at:
+          type: string
+          format: date-time
+        tier:
+          type: integer
+    CustomerList:
+      type: object
+      required: [data, total]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Customer"
+        total:
+          type: integer
+    CustomerCreate:
+      type: object
+      required: [name, email]
+      properties:
+        name:
+          type: string
+        email:
+          type: string
+        plan:
+          type: string
+          enum: [free, pro, legacy]
+    CustomerUpdate:
+      type: object
+      required: [plan]
+      properties:
+        plan:
+          type: string
+          enum: [free, pro, legacy]
+    Invoice:
+      type: object
+      required: [id, customer_id, amount_cents, status, currency]
+      properties:
+        id:
+          type: string
+        customer_id:
+          type: string
+        amount_cents:
+          type: integer
+        status:
+          type: string
+          enum: [draft, open, paid, void]
+        currency:
+          type: string
+          enum: [usd, eur]

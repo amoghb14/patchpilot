@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "patchpilot"
+version = "0.1.0"
+description = "Automated API migration and compatibility engine"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+  "sqlalchemy>=2.0",
+  "pydantic>=2.7",
+  "pydantic-settings>=2.3",
+  "pyyaml>=6.0",
+  "libcst>=1.4",
+  "httpx>=0.27",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "requests>=2.31"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["patchpilot*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

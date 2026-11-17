@@ -1,0 +1,41 @@
+{
+  "provider": "acme",
+  "notes": [
+    "Explicit migration metadata is what lets PatchPilot auto-apply a rename.",
+    "Without a rule the engine only reports a rename hypothesis and marks it for review."
+  ],
+  "renames": [
+    {
+      "location": "response",
+      "from": "name",
+      "to": "full_name"
+    },
+    {
+      "location": "response",
+      "from": "data",
+      "to": "results",
+      "endpoints": ["GET /v1/customers"]
+    }
+  ],
+  "path_changes": [
+    {
+      "from": "GET /v1/invoices/{invoice_id}",
+      "to": "GET /v2/invoices/{invoice_id}"
+    }
+  ],
+  "required_fields": [
+    {
+      "endpoint": "PATCH /v1/customers/{customer_id}",
+      "location": "request_body",
+      "field": "change_reason",
+      "value_expr": "\"patchpilot migration\""
+    }
+  ],
+  "removals": [
+    {
+      "endpoint": "GET /v1/customers/{customer_id}",
+      "field": "email",
+      "strategy": "optional_access"
+    }
+  ]
+}
