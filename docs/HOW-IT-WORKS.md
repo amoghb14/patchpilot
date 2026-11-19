@@ -124,7 +124,7 @@ From `benchmarks/latest.json` (Python 3.11, macOS arm64), generated corpus with 
 | Labelled field locations | 400 |
 | True positives / false positives / false negatives | 400 / **0** / **0** |
 | Precision / recall / F1 | **1.000** / **1.000** / **1.000** |
-| Throughput | ~1,060 files/s (0.94 ms per file) |
+| Throughput | ~800 files/s (~1.2 ms per file); 700–1,060 across repeated runs on the same laptop |
 | Changes detected | 6 breaking |
 | Migration verification | `verified` — 5 failing before, 9 passing after |
 

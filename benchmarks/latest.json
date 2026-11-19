@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-17T04:25:06.803123+00:00",
+  "generated_at": "2026-11-19T03:05:10.164429+00:00",
   "python": "3.11.3",
   "platform": "macOS-26.6.2-arm64-arm-64bit",
   "corpus": {
@@ -23,9 +23,9 @@
     "f1": 1.0,
     "false_positive_examples": [],
     "false_negative_examples": [],
-    "scan_duration_ms": 95.3,
-    "files_per_second": 1059.9,
-    "ms_per_file": 0.94,
+    "scan_duration_ms": 128.3,
+    "files_per_second": 787.4,
+    "ms_per_file": 1.27,
     "changes_detected": 6,
     "breaking_changes": 6
   },
@@ -34,9 +34,9 @@
       "modules": 25,
       "files": 26,
       "lines": 1326,
-      "scan_duration_ms": 22.1,
-      "files_per_second": 1178.2,
-      "ms_per_file": 0.85,
+      "scan_duration_ms": 30.7,
+      "files_per_second": 846.3,
+      "ms_per_file": 1.18,
       "precision": 1.0,
       "recall": 1.0
     },
@@ -44,9 +44,9 @@
       "modules": 100,
       "files": 101,
       "lines": 5301,
-      "scan_duration_ms": 98.9,
-      "files_per_second": 1021.4,
-      "ms_per_file": 0.98,
+      "scan_duration_ms": 118.5,
+      "files_per_second": 852.5,
+      "ms_per_file": 1.17,
       "precision": 1.0,
       "recall": 1.0
     },
@@ -54,9 +54,9 @@
       "modules": 250,
       "files": 251,
       "lines": 13251,
-      "scan_duration_ms": 238.4,
-      "files_per_second": 1052.7,
-      "ms_per_file": 0.95,
+      "scan_duration_ms": 447.6,
+      "files_per_second": 560.8,
+      "ms_per_file": 1.78,
       "precision": 1.0,
       "recall": 1.0
     }
@@ -65,13 +65,13 @@
     "status": "verified",
     "files_changed": 2,
     "edits": 7,
-    "skipped": 25,
+    "skipped": 16,
     "baseline_failed": 5,
     "baseline_status": "failed",
     "patched_passed": 9,
     "patched_status": "passed",
-    "baseline_ms": 886,
-    "patched_ms": 762,
-    "summary": "Regression reproduced (5 failing, 0 errors) and the patch passes 9 tests in 762 ms."
+    "baseline_ms": 835,
+    "patched_ms": 771,
+    "summary": "Regression reproduced (5 failing, 0 errors) and the patch passes 9 tests in 771 ms."
   }
 }

@@ -77,8 +77,10 @@ The tool also leaves `app/legacy.py` completely alone. That file has `customer["
 but those dictionaries come from a CSV import, not from the API. Not touching them is the whole point.
 
 There is a benchmark too (run `scripts/benchmark.py` to reproduce). On a generated test set with 400
-known answers, it found all 400, with **zero false positives**, at about **1,060 files per second**.
-That's a synthetic test set — a check that the code works, not a promise about every real-world repo.
+known answers, it found all 400, with **zero false positives** — 100% precision and 100% recall — at
+roughly **800 files per second**. Speed varies with whatever else your laptop is doing: repeated runs
+landed between 700 and 1,060 files/s. That's a synthetic test set, so it's a check that the code
+works, not a promise about every real-world repo.
 
 ---
 
